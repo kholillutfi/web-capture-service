@@ -1,0 +1,20 @@
+version: "3.3"
+services:
+  web_capture:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: web_capture_service:latest
+    container_name: web_capture_service
+    ports:
+      - "4000:4000"
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
+    environment:
+      - NODE_ENV=production
+      - PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+      - PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+    shm_size: "256mb"
+    restart: unless-stopped
