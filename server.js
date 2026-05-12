@@ -85,18 +85,29 @@ async function waitForNetworkIdle(page, { idleMs = 1500, timeout = 30_000 } = {}
   }
   return false;
 }
- 
-// ── Tunggu spinner hilang ──────────────────────────────────────────────────
-async function waitNoSpinner(page, timeout = 15_000) {
-  await page.waitForFunction(() => {
-    const els = document.querySelectorAll(".o_loading, .o_spinner, .o_blockUI, .blockUI");
-    return els.length === 0 || [...els].every(el => {
-      const s = window.getComputedStyle(el);
-      return s.display === "none" || s.visibility === "hidden" || s.opacity === "0";
-    });
-  }, { timeout, polling: 300 }).catch(() => {});
+
+async function doLoginAndSave(page, context, login, password) {
+  log('login..')
+  await page.fill('input[name="login"]', login);
+  await page.fill('input[name="password"]', password);
+
+  await page.click('button[type="submit"]');
+
+  await page.waitForLoadState("networkidle");
+
+  // 💾 simpan session
+  await context.storageState({ path: "auth.json" });
 }
- 
+
+async function isLoggedIn(page, url) {
+  await page.goto(url, {
+    waitUntil: "domcontentloaded",
+  });
+
+  return !page.url().includes("/web/login");
+}
+
+const fs = require("fs");
 // ── POST /capture ──────────────────────────────────────────────────────────
 app.post("/capture", async (req, res) => {
   const p = req.body;
@@ -115,39 +126,37 @@ app.post("/capture", async (req, res) => {
   try {
     const b = await getBrowser();
  
-    const contextOpts = {
+    let contextOpts = {
       viewport: {
         width:  p.viewport_width,
         height: p.viewport_height,
       },
       ignoreHTTPSErrors: true,
     };
- 
-    if (p.session_id) {
-      const { hostname, protocol } = new URL(p.url);
-      contextOpts.storageState = {
-        cookies: [{
-          name: "session_id",
-          value: String(p.session_id),
-          domain: hostname,
-          path: "/",
-          httpOnly: true,
-          secure: protocol === "https:",
-          sameSite: "Lax",
-        }],
-      };
+    
+    const session = fs.existsSync("auth.json")
+    if (session) {
+      log('use session')
+      contextOpts.storageState = "auth.json";
     }
- 
+
     const context = await b.newContext(contextOpts);
- 
     // ★ Inject XHR/fetch counter SEBELUM page load apapun
     await context.addInitScript(INJECT_SCRIPT);
  
     const page = await context.newPage();
- 
+
+    let loggedIn = await isLoggedIn(page, p.url);
+
+    if (!loggedIn) {
+      console.log(p.auth_username);
+      console.log(p.auth_password);
+      await doLoginAndSave(page, context, p.auth_username, p.auth_password);
+    }
+    
     // 1. Navigate
     log(`1. Navigating...`);
-    await page.goto(p.url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    await page.goto(p.url, { waitUntil: "domcontentloaded", timeout: 30_000 });
     log(`   DOM ready (${elapsed()})`);
  
     log(`2. Waiting for Odoo shell...`);
@@ -157,8 +166,8 @@ app.post("/capture", async (req, res) => {
     }).catch(() => {});
     log(`   Shell visible (${elapsed()})`);
  
-    log(`3. Waiting for network idle (XHR/fetch = 0 selama 1.5s)...`);
-    const isIdle = await waitForNetworkIdle(page, { idleMs: 1500, timeout: 50_000 });
+    log(`3. Waiting for network idle (XHR/fetch = 0 selama 30s)...`);
+    const isIdle = await waitForNetworkIdle(page, { idleMs: 1500, timeout: 30_000 });
     log(`   Network idle: ${isIdle} (${elapsed()})`);
     
     const finalUrl   = page.url();
@@ -199,14 +208,6 @@ app.post("/capture", async (req, res) => {
           timing_ms: Date.now() - start,
         });
       }
- 
-    // log(`6. Final spinner check...`);
-    await waitNoSpinner(page, 10_000);
-    // log(`   Final check done (${elapsed()})  `);
- 
-    // 7. Settle pendek — render terakhir ke layar
-    await page.waitForTimeout(800);
-    log(`Content settled (${elapsed()})`);
 
     log(`URL check OK — ${finalUrl}`);
  
