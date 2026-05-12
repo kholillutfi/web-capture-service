@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="0">
+        <record id="email_template_for_gantt_chart_report" model="mail.template">
+            <field name="name">Gantt Chart Manufacturing</field>
+            <field name="model_id" ref="model_web_capture_report_automation" />
+            <field name="subject">Gantt Chart Manufacturing PT OTA</field>
+            <field name="email_from">"PPIC | OTAZEN" &lt;hrd@otazen.com&gt;</field>
+            <field name="email_to">management@otazen.com, it@otazen.com</field>
+            <!-- <field name="email_cc">hrd@otazen.com</field> -->
+            <field name="body_html" type="html">
+                <div style="margin: 0; padding: 0;">
+                    <p>Halo,</p>
+                    <p>Berikut adalah Laporan Gantt Chart Manufacturing order pada tanggal ${object.date}.</p>
+                    <p>Best regards,<br/>
+                    ${object.name}</p>
+                </div>  
+            </field>
+        </record>
+    </data>
+</odoo>

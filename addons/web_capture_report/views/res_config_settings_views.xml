@@ -1,0 +1,82 @@
+<?xml version='1.0' encoding='utf-8'?>
+<odoo>
+    <data>
+    
+        <record id="res_config_settings_view_form" model="ir.ui.view">
+            <field name="name">res.config.settings.view.form.web_capture.inherit.base.setup</field>
+            <field name="model">res.config.settings</field>
+            <field name="priority" eval="50"/>
+            <field name="inherit_id" ref="base.res_config_settings_view_form"/>
+            <field name="arch" type="xml">
+                <xpath expr="//div[hasclass('settings')]" position="inside">
+                    <div class="app_settings_block" data-string="Web Capture Report" data-key="web_capture_report">
+                        <h2>Gantt Capture Service</h2>
+                        <div class="row mt16 o_settings_container" name="web_capture_report_setting_container">
+
+                            <div class="col-12 col-lg-6 o_setting_box">
+                                <div class="o_setting_left_pane">
+                                    <span class="fa fa-lg fa-server"/>
+                                </div>
+                                <div class="o_setting_right_pane">
+                                    <label for="web_capture_node_server"/>
+                                    <div class="row">
+                                        <div class="text-muted col-lg-8">
+                                            IP address and port of the Node.js server used to generate web page screenshots.
+                                        </div>
+                                    </div>
+                                    <div class="content-group">
+                                        <div class="mt16">
+                                            <field name="web_capture_node_server" placeholder="192.168.xx.xx:3000"/>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-12 col-lg-6 o_setting_box">
+                                <div class="o_setting_left_pane">
+                                    <span class="fa fa-user-circle"/>
+                                </div>
+                                <div class="o_setting_right_pane">
+                                    <span><b>Credentials</b></span>
+                                    <div class="row mb-3">
+                                        <div class="text-muted col-lg-8">
+                                            Credentials used to authenticate the connection to the Gantt Capture service on the Node Js Server.
+                                        </div>
+                                    </div>
+                                    <div class="content-group">
+                                        <label for="web_capture_auth_username"/>
+                                        <field name="web_capture_auth_username" placeholder="username..."/>
+                                        <!-- <div class="mt16"> -->
+                                        <!-- </div> -->
+                                    </div>
+
+                                    <div class="content-group">
+                                        <label for="web_capture_auth_password"/>
+                                        <field name="web_capture_auth_password" placeholder="*******" password="True"/>
+                                        <!-- <div class="mt16"> -->
+                                        <!-- </div> -->
+                                    </div>
+
+                                </div>
+                            </div>
+
+
+                        </div>
+                    </div>
+                </xpath>
+            </field>
+        </record>
+
+        <record id="action_web_capture_report_configuration" model="ir.actions.act_window">
+            <field name="name">Settings</field>
+            <field name="type">ir.actions.act_window</field>
+            <field name="res_model">res.config.settings</field>
+            <field name="view_mode">form</field>
+            <field name="target">inline</field>
+            <field name="context">{'module' : 'web_capture_report', 'bin_size': False}</field>
+        </record>
+        
+    
+    </data>
+    
+</odoo>

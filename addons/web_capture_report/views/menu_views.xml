@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+        <menuitem id="web_capture_report_menu_root" name="Gantt Capture Report" sequence="1"/>
+            <menuitem id="web_capture_report_menu_categ" name="Capture Report" parent="web_capture_report_menu_root" sequence="10"/>
+                <menuitem id="web_capture_report_menu_act" name="Gantt Capture" parent="web_capture_report_menu_categ" action="web_capture_report_action" sequence="1"/>
+            <menuitem id="web_capture_report_setting_menu_act" name="Setting" parent="web_capture_report_menu_root" action="action_web_capture_report_configuration" sequence="20"/>
+
+</odoo>

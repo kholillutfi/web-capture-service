@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <data>
+    
+        <record model="ir.cron" id="capture_report_gantt_manufacturing_reporting">
+            <field name="name">Gantt Chart Manufacturing Order Reporting</field>
+            <field name="interval_number">1</field>
+            <field name="interval_type">weeks</field>
+            <field name="numbercall">-1</field>
+            <field name="doall" eval="False"/>
+            <field name="model_id" ref="model_web_capture_report"/>
+            <field name="state">code</field>
+            <field name="code">record_id = 1
+
+capture_id = env[model._name].browse(record_id)
+
+if not capture_id.convert_pdf:
+    raise UserError('Gantt Capture harus di convert pdf dulu!')
+
+capture_id.action_capture()
+
+if not capture_id.screenshot_file: 
+  schedule_action_id = env['ir.cron'].browse(115)
+  if schedule_action_id:
+    schedule_action_id.method_direct_trigger()
+else:
+  today = datetime.date.today()
+  
+  report_automation_id = env['web.capture.report.automation'].create({
+          'date': today, 
+          'name': capture_id.name+' - '+today.strftime('%d/%m/%Y'), 
+          'report_file': capture_id.pdf_file,
+          'report_view': capture_id.screenshot_file,
+          'report_view_name': capture_id.screenshot_filename})
+          
+  report_automation_id.report_send_mail()
+            </field>
+        </record>       
+    
+    </data>
+    
+
+</odoo>

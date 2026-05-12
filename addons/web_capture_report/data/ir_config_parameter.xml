@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <data>
+    
+        <record id="config_parameter_web_capture_node_server" model="ir.config_parameter">
+            <field name="key">web.capture.node.server</field>
+            <field name="value" eval=""/>
+        </record>
+
+        <record id="config_parameter_web_capture_username" model="ir.config_parameter">
+            <field name="key">web.capture.username</field>
+            <field name="value" eval=""/>
+        </record>
+
+        <record id="config_parameter_web_capture_password" model="ir.config_parameter">
+            <field name="key">web.capture.password</field>
+            <field name="value" eval=""/>
+        </record>
+
+    </data>
+    
+
+</odoo>
