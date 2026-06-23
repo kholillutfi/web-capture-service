@@ -10,7 +10,7 @@
             <field name="arch" type="xml">
                 <xpath expr="//div[hasclass('settings')]" position="inside">
                     <div class="app_settings_block" data-string="Web Capture Report" data-key="web_capture_report">
-                        <h2>Gantt Capture Service</h2>
+                        <h2>Web Capture Configuration</h2>
                         <div class="row mt16 o_settings_container" name="web_capture_report_setting_container">
 
                             <div class="col-12 col-lg-6 o_setting_box">
@@ -40,7 +40,7 @@
                                     <span><b>Credentials</b></span>
                                     <div class="row mb-3">
                                         <div class="text-muted col-lg-8">
-                                            Credentials used to authenticate the connection to the Gantt Capture service on the Node Js Server.
+                                            Credentials used to authenticate the connection to the Web Capture service on the Node Js Server.
                                         </div>
                                     </div>
                                     <div class="content-group">

@@ -1,5 +1,5 @@
 {
-    'name': 'Gantt Capture Report',
+    'name': 'Web Capture',
     'summary': 'Gantt Capture Report',
     'version': '14.0',
     'category': 'Tools',

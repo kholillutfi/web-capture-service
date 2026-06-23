@@ -16,7 +16,7 @@ class WebCaptureReport(models.Model):
     _description = 'Web Page Capture Report'
 
     name = fields.Char(string="Name", required=True)
-    capture_url = fields.Char("Gantt View URL", required=True)
+    capture_url = fields.Char("Web URL", required=True)
     screenshot_file = fields.Binary("Screenshot Result", readonly=True)
     screenshot_filename = fields.Char("Filename", readonly=True)
     viewport_width = fields.Integer(string="Width", default=1920, required=True)
@@ -67,6 +67,7 @@ class WebCaptureReport(models.Model):
                     "url": self.capture_url, 
                     "username": auth_username,
                     "password": auth_password,
+                    "database": self.env.cr.dbname,
                     "viewport_width": self.viewport_width,
                     "viewport_height": self.viewport_height,
                     "fullpage": self.fullpage,
@@ -77,6 +78,7 @@ class WebCaptureReport(models.Model):
                 })
             resp.raise_for_status()
             data = resp.json()
+            # logger.info(data)
 
             # get base64 string from Node.js API
             base64_img = data.get("screenshot_base64")

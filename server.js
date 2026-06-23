@@ -1,12 +1,110 @@
 const express = require("express");
 const { chromium } = require("playwright");
+const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
 const app = express();
 app.use(express.json());
 
-function getViewType(url) {
-    const parsed = new URL(url);
-    const params = new URLSearchParams(parsed.hash.substring(1));
-    return params.get("view_type");
+const AUTH_STATE_DIR = "auth_sessions";
+const ODOO_SETTLE_MS = 0;
+const ODOO_LOADING_SELECTOR =
+  ".o_loading_indicator, .o_spinner, .o_blockUI, .o_loading";
+const ODOO_VIEW_SELECTORS = {
+  activity: ".o_activity_view",
+  calendar: ".o_calendar_view, .o_calendar_renderer",
+  form: ".o_form_view, .o_form_renderer",
+  gantt: ".o_gantt_view, .o_gantt_renderer",
+  graph: ".o_graph_view, .o_graph_renderer",
+  kanban: ".o_kanban_view, .o_kanban_renderer",
+  list: ".o_list_view, .o_list_renderer",
+  pivot: ".o_pivot, .o_pivot_renderer",
+};
+
+function parseUrl(url) {
+  try {
+    return new URL(url);
+  } catch {
+    return null;
+  }
+}
+
+function getViewType(parsed) {
+  const params = new URLSearchParams(parsed.hash.substring(1));
+  return params.get("view_type");
+}
+
+function isOdooUrl(parsed) {
+  const params = new URLSearchParams(parsed.hash.substring(1));
+  const hasOdooHash = ["action", "model", "view_type", "menu_id"].some((key) =>
+    params.has(key)
+  );
+  const hasOdooPath =
+    parsed.pathname === "/web" || parsed.pathname.startsWith("/web/");
+
+  return hasOdooHash || hasOdooPath;
+}
+
+function getAuthCredentials(payload) {
+  return {
+    username: payload.auth_username || payload.username,
+    password: payload.auth_password || payload.password,
+  };
+}
+
+function getOdooDatabase(payload, parsed) {
+  return (
+    payload.database ||
+    payload.db ||
+    payload.odoo_database ||
+    parsed.searchParams.get("db") ||
+    "default"
+  );
+}
+
+function getOdooUrl(url, database) {
+  if (!database || database === "default") return url;
+
+  const parsed = new URL(url);
+  parsed.searchParams.set("db", database);
+  return parsed.toString();
+}
+
+function getOdooSession(payload, parsed) {
+  const credentials = getAuthCredentials(payload);
+  const scope = {
+    origin: parsed.origin,
+    database: getOdooDatabase(payload, parsed),
+    username: credentials.username || "unknown",
+  };
+  const key = crypto
+    .createHash("sha1")
+    .update(`${scope.origin}|${scope.database}|${scope.username}`)
+    .digest("hex");
+
+  return {
+    path: path.join(AUTH_STATE_DIR, `${key}.json`),
+    scope,
+  };
+}
+
+function getScreenshotOptions(payload) {
+  const shotOpts = { fullPage: Boolean(payload.fullpage), type: "png" };
+
+  if (!shotOpts.fullPage) {
+    shotOpts.clip = {
+      x: Number(payload.crop_x),
+      y: Number(payload.crop_y),
+      width: Number(payload.crop_width),
+      height: Number(payload.crop_height),
+    };
+  }
+
+  return shotOpts;
+}
+
+function getOdooViewSelector(viewType) {
+  return ODOO_VIEW_SELECTORS[viewType] || null;
 }
 
 // server running information
@@ -50,56 +148,21 @@ async function getBrowser() {
   return browser;
 }
 
-// ── Script diinjek SEBELUM page load — nangkap semua XHR/fetch dari awal ──
-const INJECT_SCRIPT = `
-  window.__activeReqs = 0;
-  const _open = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function(...a) {
-    window.__activeReqs++;
-    this.addEventListener("loadend", () => { window.__activeReqs = Math.max(0, window.__activeReqs - 1); });
-    return _open.apply(this, a);
-  };
-  const _fetch = window.fetch;
-  window.fetch = function(...a) {
-    window.__activeReqs++;
-    const p = _fetch.apply(this, a);
-    p.finally(() => { window.__activeReqs = Math.max(0, window.__activeReqs - 1); });
-    return p;
-  };
-`;
-
-// ── Tunggu sampai XHR/fetch idle N ms berturut-turut ──────────────────────
-async function waitForNetworkIdle(page, { idleMs = 1500, timeout = 30_000 } = {}) {
-  const deadline = Date.now() + timeout;
-  let idleSince = null;
- 
-  while (Date.now() < deadline) {
-    const active = await page.evaluate(() => window.__activeReqs ?? 0).catch(() => 0);
-    if (active === 0) {
-      if (!idleSince) idleSince = Date.now();
-      if (Date.now() - idleSince >= idleMs) return true;
-    } else {
-      idleSince = null;
-    }
-    await page.waitForTimeout(200);
-  }
-  return false;
-}
-
-async function doLoginAndSave(page, context, login, password) {
+async function loginOdooAndSaveSession(page, context, login, password, sessionPath) {
   log('login..')
+  await page.waitForSelector('input[name="login"]', { timeout: 15_000 });
   await page.fill('input[name="login"]', login);
   await page.fill('input[name="password"]', password);
 
   await page.click('button[type="submit"]');
 
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
 
-  // 💾 simpan session
-  await context.storageState({ path: "auth.json" });
+  fs.mkdirSync(AUTH_STATE_DIR, { recursive: true });
+  await context.storageState({ path: sessionPath });
 }
 
-async function isLoggedIn(page, url) {
+async function hasActiveOdooSession(page, url) {
   await page.goto(url, {
     waitUntil: "domcontentloaded",
   });
@@ -107,123 +170,167 @@ async function isLoggedIn(page, url) {
   return !page.url().includes("/web/login");
 }
 
-const fs = require("fs");
+async function ensureOdooSession(page, context, payload, url, sessionPath) {
+  const loggedIn = await hasActiveOdooSession(page, url);
+  if (loggedIn) return;
+
+  const credentials = getAuthCredentials(payload);
+  if (!credentials.username || !credentials.password) {
+    throw new Error("Odoo login dibutuhkan, tapi username/password tidak dikirim");
+  }
+
+  await loginOdooAndSaveSession(
+    page,
+    context,
+    credentials.username,
+    credentials.password,
+    sessionPath
+  );
+}
+
+async function waitForOdooLoadingDone(page) {
+  await page.waitForFunction((selector) => {
+    return [...document.querySelectorAll(selector)].every((element) => {
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+
+      return (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        Number(style.opacity) === 0 ||
+        rect.width === 0 ||
+        rect.height === 0
+      );
+    });
+  }, ODOO_LOADING_SELECTOR, { timeout: 45_000 }).catch(() => {});
+}
+
+async function waitForOdooReady(page, viewType, elapsed) {
+  log(`2. Waiting for Odoo shell...`);
+  await page.waitForSelector(".o_web_client, .o_action_manager", {
+    state: "visible",
+    timeout: 60_000,
+  }).catch(() => {});
+  log(`   Shell visible (${elapsed()})`);
+
+  const viewSelector = getOdooViewSelector(viewType);
+  if (viewSelector) {
+    log(`3. Waiting for Odoo ${viewType} view...`);
+    await page.waitForSelector(viewSelector, {
+      state: "visible",
+      timeout: 60_000,
+    }).catch(() => {});
+    log(`   View visible (${elapsed()})`);
+  }
+
+  log(`4. Waiting for Odoo loading to finish...`);
+  await waitForOdooLoadingDone(page);
+  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+  await page.waitForTimeout(ODOO_SETTLE_MS);
+  log(`   Odoo ready (${elapsed()})`);
+}
+
+async function waitForPublicPageReady(page, elapsed) {
+  log(`2. Waiting for public page idle...`);
+  await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
+  log(`   Public page ready (${elapsed()})`);
+}
+
 // ── POST /capture ──────────────────────────────────────────────────────────
 app.post("/capture", async (req, res) => {
   const p = req.body;
-  
-  if (getViewType(p.url) !== 'gantt') {
-    return res.json({
-          status: "Wrong View",
-          requested_url: p.url,
-        });
+
+  const requestedUrl = p.url;
+  const parsedUrl = parseUrl(requestedUrl);
+
+  if (!parsedUrl || !["http:", "https:"].includes(parsedUrl.protocol)) {
+    return res.status(400).json({
+      status: "error",
+      message: "Invalid URL. Gunakan URL lengkap dengan http:// atau https://",
+      requested_url: requestedUrl,
+    });
   }
-  
+
   const start = Date.now();
   const elapsed = () => `${Date.now() - start} ms`;
-  log(`Capture start — ${p.url}`);
+  const isOdoo = isOdooUrl(parsedUrl);
+  const odooSession = isOdoo ? getOdooSession(p, parsedUrl) : null;
+  const captureUrl = isOdoo
+    ? getOdooUrl(requestedUrl, odooSession.scope.database)
+    : requestedUrl;
+  const requestedViewType = getViewType(parsedUrl);
+  let context = null;
+
+  log(`Capture start — ${requestedUrl}`);
+  log(`Mode — ${isOdoo ? "Odoo auth/session" : "public web"}`);
+  if (odooSession) {
+    log(
+      `Session scope — ${odooSession.scope.origin} / ` +
+      `db=${odooSession.scope.database} / user=${odooSession.scope.username}`
+    );
+  }
  
   try {
     const b = await getBrowser();
  
-    let contextOpts = {
+    const contextOpts = {
       viewport: {
-        width:  p.viewport_width,
-        height: p.viewport_height,
+        width: Number(p.viewport_width),
+        height: Number(p.viewport_height),
       },
       ignoreHTTPSErrors: true,
     };
     
-    const session = fs.existsSync("auth.json")
+    const session = odooSession && fs.existsSync(odooSession.path);
     if (session) {
       log('use session')
-      contextOpts.storageState = "auth.json";
+      contextOpts.storageState = odooSession.path;
     }
 
-    const context = await b.newContext(contextOpts);
-    // ★ Inject XHR/fetch counter SEBELUM page load apapun
-    await context.addInitScript(INJECT_SCRIPT);
+    context = await b.newContext(contextOpts);
  
     const page = await context.newPage();
 
-    let loggedIn = await isLoggedIn(page, p.url);
-
-    if (!loggedIn) {
-      console.log(p.auth_username);
-      console.log(p.auth_password);
-      await doLoginAndSave(page, context, p.auth_username, p.auth_password);
+    if (isOdoo) {
+      await ensureOdooSession(page, context, p, captureUrl, odooSession.path);
     }
     
-    // 1. Navigate
     log(`1. Navigating...`);
-    await page.goto(p.url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.goto(captureUrl, { waitUntil: "domcontentloaded" });
     log(`   DOM ready (${elapsed()})`);
  
-    log(`2. Waiting for Odoo shell...`);
-    await page.waitForSelector(".o_web_client, .o_action_manager", {
-      state: "visible",
-      timeout: 30_000,
-    }).catch(() => {});
-    log(`   Shell visible (${elapsed()})`);
+    if (isOdoo) {
+      await waitForOdooReady(page, requestedViewType, elapsed);
+    } else {
+      await waitForPublicPageReady(page, elapsed);
+    }
  
-    log(`3. Waiting for network idle (XHR/fetch = 0 selama 30s)...`);
-    const isIdle = await waitForNetworkIdle(page, { idleMs: 1500, timeout: 30_000 });
-    log(`   Network idle: ${isIdle} (${elapsed()})`);
-    
-    const finalUrl   = page.url();
-    const urlChanged = getViewType(finalUrl) !== getViewType(p.url);
+    const finalUrl = page.url();
+    const finalParsedUrl = parseUrl(finalUrl);
+    const urlChanged = isOdoo &&
+      requestedViewType &&
+      finalParsedUrl &&
+      getViewType(finalParsedUrl) !== requestedViewType;
 
     if (urlChanged) {
-        log(`URL diminta : ${p.url}`);
-        log(`URL aktual  : ${finalUrl}`);
-        log(`Capture Failed`);
-        await context.close();
-        const timing_ms = Date.now() - start;
-        return res.status(200).json({
-            status: "redirected",
-            message: "Halaman redirect/mental, capture dibatalkan",
-            requested_url: p.url,
-            final_url: finalUrl,
-            timing_ms,
-        });
+      log(`URL diminta : ${requestedUrl}`);
+      log(`URL aktual  : ${finalUrl}`);
+      log(`Capture Failed`);
+      const timing_ms = Date.now() - start;
+      return res.status(200).json({
+        status: "redirected",
+        message: "Halaman redirect/mental, capture dibatalkan",
+        requested_url: requestedUrl,
+        final_url: finalUrl,
+        timing_ms,
+      });
     }
-
-    const found = await page.$('.o_gantt_view') !== null;
-    if (!found) {
-        const info = await page.evaluate(() => ({
-            url:   window.location.href,
-            hash:  window.location.hash,
-            title: document.title,
-            body:  document.body.innerText.substring(0, 500),
-        }));
-
-        console.log("page info:", JSON.stringify(info, null, 2));
-        log(`Capture Failed Wrong View`);
-
-        await context.close();
-        return res.json({
-          status: "wrong_view",
-          message: `Selector "${'o_gantt_view'}" tidak ditemukan di DOM`,
-          requested_url: p.url,
-          timing_ms: Date.now() - start,
-        });
-      }
 
     log(`URL check OK — ${finalUrl}`);
  
-    // Screenshot
-    const shotOpts = { fullPage: Boolean(p.fullpage), type: "png" };
-    if (!shotOpts.fullPage) {
-      shotOpts.clip = {
-        x:      p.crop_x,
-        y:      p.crop_y,
-        width:  p.crop_width,
-        height: p.crop_height,
-      };
-    }
+    const shotOpts = getScreenshotOptions(p);
  
     const screenshot = await page.screenshot(shotOpts);
-    await context.close();
  
     const timing_ms = Date.now() - start;
     log(`Capture done — ${timing_ms} ms — ${(screenshot.length / 1024).toFixed(1)} KB`);
@@ -238,6 +345,12 @@ app.post("/capture", async (req, res) => {
     const timing_ms = Date.now() - start;
     log(`ERROR — ${err.message} (${timing_ms} ms)`);
     res.status(500).json({ status: "error", message: err.message, timing_ms });
+  } finally {
+    if (context) {
+      await context.close().catch((err) => {
+        log(`Context close failed — ${err.message}`);
+      });
+    }
   }
 });
 
